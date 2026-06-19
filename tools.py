@@ -212,4 +212,360 @@ def find_file_path(filename: str = "", target_directory: str = "") -> dict:
         "results": matches
     }
 
-tool_kit=[load_csv_file, kaggle_dataset_tool, explore_temp_csv, find_file_path]
+
+@tool
+def create_postgres_table_from_csv(
+    csv_path: str,
+    table_name: str
+) -> dict:
+    """
+    Creates a PostgreSQL table immediately.
+
+    This tool performs the action directly.
+    It connects to PostgreSQL using configured environment variables
+    and executes CREATE TABLE.
+
+    Use this whenever the user asks to:
+    - create a table
+    - create a schema
+    - prepare a database table
+    - import a dataset into PostgreSQL
+
+    Do not generate SQL manually if this tool is available.
+    """
+
+    import os
+    import pandas as pd
+    import psycopg2
+    from dotenv import load_dotenv
+    
+
+    try:
+        load_dotenv()
+        
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT"),
+            dbname=os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD")
+        )
+
+        df = pd.read_csv(csv_path, nrows=100)
+
+        columns = []
+
+        for col, dtype in df.dtypes.items():
+
+            if "int" in str(dtype):
+                sql_type = "BIGINT"
+
+            elif "float" in str(dtype):
+                sql_type = "DOUBLE PRECISION"
+
+            elif "bool" in str(dtype):
+                sql_type = "BOOLEAN"
+
+            else:
+                sql_type = "TEXT"
+
+            safe_col = (
+                col.lower()
+                .replace(" ", "_")
+                .replace("-", "_")
+            )
+
+            columns.append(
+                f'"{safe_col}" {sql_type}'
+            )
+
+        sql = f"""
+        CREATE TABLE IF NOT EXISTS {table_name}
+        (
+            {",".join(columns)}
+        )
+        """
+
+        cur = conn.cursor()
+        cur.execute(sql)
+
+        conn.commit()
+
+        cur.close()
+        conn.close()
+
+        return {
+            "status": "success",
+            "table": table_name,
+            "columns": len(columns)
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+@tool
+def load_csv_to_postgres(csv_path: str, table_name: str) -> dict:
+    """ Loads a CSV file into a PostgreSQL table. 
+    This tool: - Reads a CSV file from the given file path 
+    - Connects to PostgreSQL using environment variables 
+    (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD) 
+    - Inserts all rows into the specified table using pandas.to_sql 
+    - Appends data if the table already exists Use this tool when: 
+    - The user asks to load data into PostgreSQL 
+    - The user wants to insert a CSV into a database 
+    - The user says "store dataset in database" 
+    - The user wants to import or upload data to Postgres IMPORTANT:
+    - This tool performs the full ingestion automatically
+    - Do NOT generate SQL manually when this tool is available 
+    - Do NOT ask the user to write insert scripts 
+    - This is the primary tool for CSV → PostgreSQL ingestion 
+    """
+
+    import os
+    import pandas as pd
+    import numpy as np
+    from sqlalchemy import create_engine
+    from dotenv import load_dotenv
+
+    try:
+        load_dotenv()
+
+        df = pd.read_csv(csv_path, low_memory=False, on_bad_lines="skip")
+
+        if any("Unnamed" in str(c) for c in df.columns):
+            df = pd.read_csv(csv_path, header=None, on_bad_lines="skip")
+            df.columns = [f"col_{i}" for i in range(df.shape[1])]
+
+        df.columns = (
+            df.columns.astype(str)
+            .str.strip()
+            .str.lower()
+            .str.replace(" ", "_")
+            .str.replace("-", "_")
+        )
+
+        df = df.drop_duplicates()
+
+        df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+        df = df.replace(r'^\s*-\s*.*$', np.nan, regex=True)
+
+        bool_map = {
+            "true": True, "false": False,
+            "1": True, "0": False,
+            "yes": True, "no": False,
+            "t": True, "f": False
+        }
+
+        for col in df.columns:
+            if df[col].dtype == "object":
+                s = df[col].astype(str).str.lower().str.strip()
+                if s.isin(bool_map.keys()).mean() > 0.6:
+                    df[col] = s.map(bool_map)
+
+        for col in df.columns:
+            if df[col].dtype == "object":
+                df[col] = pd.to_numeric(df[col], errors="ignore")
+
+        df = df.where(pd.notnull(df), None)
+
+        engine = create_engine(
+            f"postgresql+psycopg2://"
+            f"{os.getenv('DB_USER')}:"
+            f"{os.getenv('DB_PASSWORD')}@"
+            f"{os.getenv('DB_HOST')}:"
+            f"{os.getenv('DB_PORT')}/"
+            f"{os.getenv('DB_NAME')}"
+        )
+
+        df.to_sql(
+            table_name,
+            engine,
+            if_exists="append",
+            index=False,
+            chunksize=1000,
+            method="multi"
+        )
+
+        return {
+            "status": "success",
+            "rows_inserted": len(df),
+            "columns": list(df.columns),
+            "table_name": table_name
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@tool
+def find_csv_files() -> dict:
+    """
+    Find all CSV files available in the workspace.
+    """
+
+    import os
+
+    csv_files = []
+
+    for root, _, files in os.walk(os.getcwd()):
+
+        if ".venv" in root:
+            continue
+
+        for file in files:
+
+            if file.lower().endswith(".csv"):
+
+                csv_files.append(
+                    os.path.join(root, file)
+                )
+
+    return {
+        "count": len(csv_files),
+        "files": csv_files
+    }
+
+@tool
+def run_postgres_query(query: str) -> dict:
+    """
+    Executes a SQL query on PostgreSQL and returns the result.
+
+    This tool:
+    - Connects to PostgreSQL using environment variables
+      (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD)
+    - Executes the provided SQL query
+    - Fetches and returns results for SELECT queries
+    - Returns row count for non-SELECT queries
+
+    Use this tool when:
+    - The user asks to run a SQL query
+    - The user wants to fetch data from PostgreSQL
+    - The user asks for analysis or retrieval from a table
+
+    IMPORTANT:
+    - Do NOT construct SQL manually outside this tool when it is available
+    - This tool is the primary interface for querying the database
+    """
+
+    import os
+    import psycopg2
+    from dotenv import load_dotenv
+
+    try:
+        load_dotenv()
+
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT"),
+            dbname=os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD")
+        )
+
+        cur = conn.cursor()
+        cur.execute(query)
+
+        # If it's a SELECT query, fetch results
+        if cur.description is not None:
+            columns = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+
+            result = [
+                dict(zip(columns, row))
+                for row in rows
+            ]
+
+            output = {
+                "status": "success",
+                "type": "select",
+                "row_count": len(result),
+                "data": result
+            }
+        else:
+            conn.commit()
+            output = {
+                "status": "success",
+                "type": "command",
+                "rows_affected": cur.rowcount
+            }
+
+        cur.close()
+        conn.close()
+
+        return output
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@tool
+def list_postgres_tables() -> dict:
+    """
+    Lists all tables in the connected PostgreSQL database.
+
+    This tool:
+    - Connects to PostgreSQL using environment variables
+      (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD)
+    - Queries information_schema to fetch all user tables
+    - Returns a list of table names
+
+    Use this when:
+    - User asks "how many tables are in my database"
+    - User wants to see available tables
+    - User asks for database schema overview
+    """
+
+    import os
+    import psycopg2
+    from dotenv import load_dotenv
+
+    try:
+        load_dotenv()
+
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT"),
+            dbname=os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD")
+        )
+
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+            ORDER BY table_name;
+        """)
+
+        tables = [row[0] for row in cur.fetchall()]
+
+        cur.close()
+        conn.close()
+
+        return {
+            "status": "success",
+            "table_count": len(tables),
+            "tables": tables
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+tool_kit=[load_csv_file, kaggle_dataset_tool, 
+          explore_temp_csv, find_file_path,
+          create_postgres_table_from_csv,load_csv_to_postgres,
+          find_csv_files, run_postgres_query, list_postgres_tables]

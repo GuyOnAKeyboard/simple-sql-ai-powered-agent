@@ -37,7 +37,7 @@ def main():
     while True:
         user_input = input("You: ").strip()
 
-        if user_input.lower() in ["exit", "quit", "q"]:
+        if user_input.lower() in ["exit", "quit", "q", "stop","bye"]:
             print("Exiting SQL AI Agent. Goodbye.")
             break
 
