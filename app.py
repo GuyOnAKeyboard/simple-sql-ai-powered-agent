@@ -1,70 +1,126 @@
 from agents import sql_agent
 
+from rich.console import Console
+from rich.panel import Panel
 
-def print_intro():
-    print("\n" + "=" * 60)
-    print("SQL AI POWERED DATA AGENT")
-    print("=" * 60)
-    print("""
-Welcome
+console = Console()
 
-This is an AI powered SQL and data agent.
 
-It can:
-- Download Kaggle datasets into local project
-- Explore temp_csv dataset folders
-- Load and preview CSV files using pandas
-- Help understand and prepare data
+def intro():
+    console.print(
+        Panel.fit(
+            "[bold cyan]SQL AI POWERED DATA AGENT[/bold cyan]\n\n"
+            "Examples:\n"
+            "• Download the movies dataset from Kaggle\n"
+            "• Show datasets in temp_csv\n"
+            "• Load movies_metadata.csv into PostgreSQL\n\n"
+            "[yellow]Exit commands:[/yellow]\n"
+            "exit | quit | q | bye",
+            title="🚀 Welcome",
+            border_style="cyan",
+        )
+    )
 
-Example queries:
-- Download the movies dataset from Kaggle
-- Show datasets in temp_csv
-- Load movies_metadata.csv and show preview
 
-Type 'exit' to quit
-    """)
-    print("=" * 60 + "\n")
+def tool_started(name):
+    console.print(
+        Panel(
+            f"[dim cyan]Running {name}[/dim cyan]",
+            title="🔧 Tool",
+            border_style="cyan",
+            style="dim",
+        )
+    )
+
+
+def tool_finished(name):
+    console.print(
+        Panel(
+            f"[dim green]{name} completed[/dim green]",
+            title="✅ Tool Complete",
+            border_style="green",
+            style="dim",
+        )
+    )
 
 
 def main():
-    print_intro()
+    intro()
 
     agent = sql_agent()
-
     chat_history = []
 
-    # Chat loop
     while True:
-        user_input = input("You: ").strip()
+        user = input("\nYou > ").strip()
 
-        if user_input.lower() in ["exit", "quit", "q", "stop","bye"]:
-            print("Exiting SQL AI Agent. Goodbye.")
+        if user.lower() in {"exit", "quit", "q", "bye"}:
+            console.print("\n👋 Goodbye\n")
             break
 
-        if not user_input:
+        if not user:
             continue
 
+        chat_history.append(("user", user))
+
         try:
-            # 1. Register the current human prompt to the timeline sequence array
-            chat_history.append(("user", user_input))
+            final_answer = None
 
-            # 2. Forward the full structural message timeline to the LangGraph executor
-            query_payload = {"messages": chat_history}
+            with console.status("[cyan]Thinking...[/cyan]", spinner="dots") as status:
 
-            response = agent.invoke(query_payload)
+                for event in agent.stream({"messages": chat_history}):
 
-            # 3. Handle the response and save full message state returned by the graph
-            if isinstance(response, dict) and "messages" in response:
-                # Update our history track with the entire execution run state (includes tool calls and agent text)
-                chat_history = response["messages"]
+                    if "model" in event:
+                        msgs = event["model"].get("messages", [])
 
-                # Extract the last textual thought message generated to show the client
-                print("\nAgent:", chat_history[-1].content, "\n")
-            else:
-                print("\nAgent:", response, "\n")
+                        for msg in msgs:
+
+                            if hasattr(msg, "tool_calls") and msg.tool_calls:
+
+                                for tool in msg.tool_calls:
+                                    tool_name = tool["name"]
+
+                                    status.update(
+                                        f"[cyan]Running tool:[/cyan] {tool_name}"
+                                    )
+
+                                    tool_started(tool_name)
+
+                            if getattr(msg, "content", None):
+                                content = str(msg.content).strip()
+
+                                if content:
+                                    final_answer = content
+
+                    elif "tools" in event:
+                        msgs = event["tools"].get("messages", [])
+
+                        for msg in msgs:
+
+                            tool_name = getattr(msg, "name", "tool")
+
+                            status.update(
+                                f"[green]Completed:[/green] {tool_name}"
+                            )
+
+                            tool_finished(tool_name)
+
+            if final_answer:
+                console.print(
+                    Panel(
+                        final_answer,
+                        title="🤖 Agent",
+                        border_style="blue",
+                    )
+                )
 
         except Exception as e:
-            print("\nError:", str(e), "\n")
+            console.print(
+                Panel(
+                    str(e),
+                    title="❌ Error",
+                    border_style="red",
+                )
+            )
 
 
 if __name__ == "__main__":
