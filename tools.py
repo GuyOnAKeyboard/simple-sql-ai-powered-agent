@@ -326,7 +326,6 @@ def load_csv_to_postgres(csv_path: str, table_name: str) -> dict:
 
     import os
     import pandas as pd
-    import numpy as np
     from sqlalchemy import create_engine
     from dotenv import load_dotenv
 
@@ -335,46 +334,10 @@ def load_csv_to_postgres(csv_path: str, table_name: str) -> dict:
 
         df = pd.read_csv(csv_path, low_memory=False, on_bad_lines="skip")
 
-        if any("Unnamed" in str(c) for c in df.columns):
-            df = pd.read_csv(csv_path, header=None, on_bad_lines="skip")
-            df.columns = [f"col_{i}" for i in range(df.shape[1])]
-
-        df.columns = (
-            df.columns.astype(str)
-            .str.strip()
-            .str.lower()
-            .str.replace(" ", "_")
-            .str.replace("-", "_")
-        )
-
-        df = df.drop_duplicates()
-
-        df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
-
-        df = df.replace(r'^\s*-\s*.*$', np.nan, regex=True)
-
-        bool_map = {
-            "true": True, "false": False,
-            "1": True, "0": False,
-            "yes": True, "no": False,
-            "t": True, "f": False
-        }
-
-        for col in df.columns:
-            if df[col].dtype == "object":
-                s = df[col].astype(str).str.lower().str.strip()
-                if s.isin(bool_map.keys()).mean() > 0.6:
-                    df[col] = s.map(bool_map)
-
-        for col in df.columns:
-            if df[col].dtype == "object":
-                df[col] = pd.to_numeric(df[col], errors="ignore")
-
-        df = df.where(pd.notnull(df), None)
+        df = df.astype(str)
 
         engine = create_engine(
-            f"postgresql+psycopg2://"
-            f"{os.getenv('DB_USER')}:"
+            f"postgresql+psycopg2://{os.getenv('DB_USER')}:"
             f"{os.getenv('DB_PASSWORD')}@"
             f"{os.getenv('DB_HOST')}:"
             f"{os.getenv('DB_PORT')}/"
@@ -384,7 +347,7 @@ def load_csv_to_postgres(csv_path: str, table_name: str) -> dict:
         df.to_sql(
             table_name,
             engine,
-            if_exists="append",
+            if_exists="replace",
             index=False,
             chunksize=1000,
             method="multi"
@@ -393,8 +356,8 @@ def load_csv_to_postgres(csv_path: str, table_name: str) -> dict:
         return {
             "status": "success",
             "rows_inserted": len(df),
-            "columns": list(df.columns),
-            "table_name": table_name
+            "table_name": table_name,
+            "csv_path":csv_path
         }
 
     except Exception as e:
@@ -402,7 +365,6 @@ def load_csv_to_postgres(csv_path: str, table_name: str) -> dict:
             "status": "error",
             "message": str(e)
         }
-
 
 @tool
 def find_csv_files() -> dict:
