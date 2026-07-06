@@ -2,8 +2,33 @@ from agents import sql_agent
 
 from rich.console import Console
 from rich.panel import Panel
+from InquirerPy import inquirer
+from llm import get_llm
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 console = Console()
+
+def extract_content(content):
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        text = []
+
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    text.append(block.get("text", ""))
+
+            elif hasattr(block, "text"):
+                text.append(block.text)
+
+        return "".join(text)
+
+    return str(content)
 
 
 def intro():
@@ -46,8 +71,17 @@ def tool_finished(name):
 
 def main():
     intro()
+    provider = inquirer.select(
+        message="Select Ai provider:",
+        choices=[
+            "Ollama",
+            "Google",
+        ],
+    ).execute()
+    
+    model_llm = get_llm(provider) 
+    agent = sql_agent(model_llm=model_llm)
 
-    agent = sql_agent()
     chat_history = []
 
     while True:
@@ -86,7 +120,7 @@ def main():
                                     tool_started(tool_name)
 
                             if getattr(msg, "content", None):
-                                content = str(msg.content).strip()
+                                content = extract_content(msg.content).strip()
 
                                 if content:
                                     final_answer = content

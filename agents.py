@@ -1,16 +1,15 @@
 from langchain.agents import create_agent
 
-from llm import llm
 from tools import tool_kit
 
 
-def sql_agent():
+def sql_agent(model_llm):
     """
     Creates and returns a LangChain SQL/data agent.
     """
 
     agent = create_agent(
-        model=llm,
+        model=model_llm,
         tools=tool_kit,
         system_prompt="""
 You are an autonomous PostgreSQL data ingestion agent.
